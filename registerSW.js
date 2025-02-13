@@ -1,0 +1,1 @@
+if('serviceWorker' in navigator) {window.addEventListener('load', () => {navigator.serviceWorker.register('/opfs-poc/sw.js', { scope: '/opfs-poc/' })})}
