@@ -7,59 +7,98 @@ function App() {
   const [error, setError] = useState(null);
 
   useEffect(() => {
+    async function initDB() {
+      return new Promise((resolve, reject) => {
+        const request = indexedDB.open('VideoDB', 1);
+        
+        request.onerror = () => reject(request.error);
+        request.onsuccess = () => resolve(request.result);
+        
+        request.onupgradeneeded = (event) => {
+          const db = event.target.result;
+          if (!db.objectStoreNames.contains('videos')) {
+            db.createObjectStore('videos');
+          }
+        };
+      });
+    }
+
     async function loadVideo() {
       try {
-        const rootDir = await navigator.storage.getDirectory();
-        let fileHandle;
+        const db = await initDB();
+        const transaction = db.transaction(['videos'], 'readonly');
+        const store = transaction.objectStore('videos');
+        const request = store.get('mainVideo');
 
-        try {
-          fileHandle = await rootDir.getFileHandle('video', { create: false });
-          const file = await fileHandle.getFile();
-          const url = URL.createObjectURL(file);
-          setVideoUrl(url);
-          setLoading(false);
-        } catch (err) {
-          console.log(err);
-          const remoteUrl ='https://videos.pexels.com/video-files/6251392/6251392-uhd_2732_1440_24fps.mp4';
-          const response = await fetch(remoteUrl);
-          if (!response.ok || !response.body) {
-            throw new Error('Network response was not ok');
-          }
+        request.onsuccess = async () => {
+          if (request.result) {
+            const url = URL.createObjectURL(request.result);
+            setVideoUrl(url);
+            setLoading(false);
+          } else {
+            try {
+              const remoteUrl = 'https://videos.pexels.com/video-files/6251392/6251392-uhd_2732_1440_24fps.mp4';
+              const response = await fetch(remoteUrl);
+              if (!response.ok || !response.body) {
+                throw new Error('Network response was not ok');
+              }
 
-          const contentLength = response.headers.get('Content-Length');
-          const total = contentLength ? parseInt(contentLength, 10) : 0;
-          const reader = response.body.getReader();
-          let receivedLength = 0;
-          const chunks = [];
+              const contentLength = response.headers.get('Content-Length');
+              const total = contentLength ? parseInt(contentLength, 10) : 0;
+              const reader = response.body.getReader();
+              let receivedLength = 0;
+              const chunks = [];
 
-          while (true) {
-            const { done, value } = await reader.read();
-            if (done) break;
-            chunks.push(value);
-            receivedLength += value.length;
-            if (total) {
-              setProgress((receivedLength / total) * 100);
+              while (true) {
+                const { done, value } = await reader.read();
+                if (done) break;
+                chunks.push(value);
+                receivedLength += value.length;
+                if (total) {
+                  setProgress((receivedLength / total) * 100);
+                }
+              }
+
+              const blob = new Blob(chunks);
+              
+              // Store the video in IndexedDB
+              const writeTransaction = db.transaction(['videos'], 'readwrite');
+              const writeStore = writeTransaction.objectStore('videos');
+              await new Promise((resolve, reject) => {
+                const writeRequest = writeStore.put(blob, 'mainVideo');
+                writeRequest.onsuccess = () => resolve();
+                writeRequest.onerror = () => reject(writeRequest.error);
+              });
+
+              const url = URL.createObjectURL(blob);
+              setVideoUrl(url);
+              setLoading(false);
+            } catch (err) {
+              console.error(err);
+              setError(err.message);
+              setLoading(false);
             }
           }
+        };
 
-          const blob = new Blob(chunks);
-
-          fileHandle = await rootDir.getFileHandle('video', { create: true });
-          const writable = await fileHandle.createWritable();
-          await writable.write(blob);
-          await writable.close();
-
-          const url = URL.createObjectURL(blob);
-          setVideoUrl(url);
+        request.onerror = () => {
+          setError(request.error.message);
           setLoading(false);
-        }
+        };
       } catch (e) {
         console.error(e);
         setError(e.message);
         setLoading(false);
       }
     }
+
     loadVideo();
+
+    return () => {
+      if (videoUrl) {
+        URL.revokeObjectURL(videoUrl);
+      }
+    };
   }, []);
 
   return (
